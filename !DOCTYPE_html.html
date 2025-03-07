@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <!-- ダブルタップ拡大の無効化、およびタップ遅延の軽減 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>あゆさんスライドパズルゲーム</title>
+  <style>
+    html, body {
+      margin: 0; padding: 0;
+      font-family: sans-serif;
+      background: #f0f0f0;
+      user-select: none; /* ドラッグ操作しやすくするため */
+    }
+    h1 {
+      text-align: center;
+      margin-top: 20px;
+    }
+    /* 経過時間と移動回数を表示するエリア */
+    #scoreboard {
+      text-align: center;
+      margin-bottom: 10px;
+      font-size: 16px;
+      font-weight: bold;
+    }
+    #puzzle-container {
+      position: relative;
+      width: 90vw;
+      max-width: 400px;
+      height: 90vw;
+      max-height: 400px;
+      margin: 0 auto 10px;
+      border: 2px solid #333;
+      background: #fff;
+      box-sizing: border-box;
+      overflow: hidden;
+      touch-action: none; /* ブラウザ標準動作を抑制し、ドラッグを実装 */
+    }
+    .tile {
+      position: absolute;
+      box-sizing: border-box;
+      border: 1px solid #ccc;
+      transition: all 0.2s ease;
+      background-repeat: no-repeat;
+      background-position: center center;
+      background-size: cover;
+      cursor: pointer;
+      touch-action: none;
+    }
+    .empty {
+      background: none;
+      cursor: default;
+      opacity: 0.3;
+    }
+    #controls {
+      text-align: center;
+      margin: 10px;
+    }
+    button {
+      margin: 5px;
+      padding: 10px 20px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    @media screen and (max-width: 480px) {
+      button {
+        font-size: 14px;
+      }
+      #scoreboard {
+        font-size: 14px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h1>あゆさんスライドパズルゲーム</h1>
+
+  <!-- 経過時間・移動回数を日本語で表示する領域 -->
+  <div id="scoreboard">経過時間: 0.0秒 | 移動回数: 0</div>
+
+  <div id="puzzle-container"></div>
+
+  <div id="controls">
+    <!-- スタートボタンを押すとゲーム開始（シャッフル＆タイマー開始） -->
+    <button onclick="startGame()">スタート</button>
+    <!-- 完成チェック -->
+    <button onclick="checkSolution()">正解チェック</button>
+  </div>
+
+  <script>
+    // ------- 定数・変数 -------
+    const ROWS = 4;
+    const COLS = 4;
+    let tiles = [];         // タイル要素を格納
+    let emptyIndex;         // 空タイルの位置(配列インデックス)
+    let tileSize = 0;       // タイル1枚あたりの大きさ(px)
+
+    // タイマー & 移動回数
+    let startTime = 0;
+    let moveCount = 0;
+    let timerInterval = null;
+
+    // ドラッグ管理
+    let draggingTile = null;
+    let startPointerX = 0;
+    let startPointerY = 0;
+    let startTileLeft = 0;
+    let startTileTop = 0;
+    let dragDirection = null;
+    let draggingIndex = null;
+
+    // ------------------------------------
+    // ページ読み込み時
+    // ------------------------------------
+    window.onload = function () {
+      initPuzzle();
+      window.addEventListener("resize", resizePuzzle);
+      // ここではまだシャッフルしない（完成状態で表示）
+      // ユーザーがスタートボタンを押すとゲーム開始
+    };
+
+    // ------------------------------------
+    // パズル初期化 (完成形のまま表示する)
+    // ------------------------------------
+    function initPuzzle() {
+      const container = document.getElementById("puzzle-container");
+      container.innerHTML = "";
+      tiles = [];
+
+      for (let row = 0; row < ROWS; row++) {
+        for (let col = 0; col < COLS; col++) {
+          const index = row * COLS + col;
+          // 最後の1ピースは空タイル
+          if (index === ROWS * COLS - 1) {
+            emptyIndex = index;
+            tiles.push(null);
+            continue;
+          }
+          // 通常タイルを作成
+          const tile = document.createElement("div");
+          tile.className = "tile";
+          tile.dataset.correctRow = row;
+          tile.dataset.correctCol = col;
+
+          tile.addEventListener("pointerdown", handlePointerDown);
+
+          tiles.push(tile);
+          container.appendChild(tile);
+        }
+      }
+      resizePuzzle();
+      updateScoreboard();
+    }
+
+    // ------------------------------------
+    // 画面リサイズでタイルサイズを再計算
+    // ------------------------------------
+    function resizePuzzle() {
+      const container = document.getElementById("puzzle-container");
+      const containerWidth = container.clientWidth;
+      tileSize = containerWidth / COLS;
+
+      container.style.height = containerWidth + "px";
+
+      for (let i = 0; i < tiles.length; i++) {
+        const tile = tiles[i];
+        if (!tile) continue;
+
+        const row = Math.floor(i / COLS);
+        const col = i % COLS;
+
+        tile.style.width  = tileSize + "px";
+        tile.style.height = tileSize + "px";
+        tile.style.left   = (col * tileSize) + "px";
+        tile.style.top    = (row * tileSize) + "px";
+        tile.style.transition = "all 0.2s ease";
+
+        tile.style.backgroundImage = 'url("puzzle.jpg")';
+        tile.style.backgroundSize  = (tileSize * COLS) + "px "
+                                   + (tileSize * ROWS) + "px";
+        tile.style.backgroundPosition =
+          `-${tile.dataset.correctCol * tileSize}px -${tile.dataset.correctRow * tileSize}px`;
+      }
+      if (tiles[emptyIndex]) {
+        tiles[emptyIndex].classList.add("empty");
+      }
+    }
+
+    // ------------------------------------
+    // 「スタート」ボタン → ゲーム開始
+    // ------------------------------------
+    function startGame() {
+      // いったんタイマー停止
+      stopTimer();
+
+      // 移動回数リセット
+      moveCount = 0;
+
+      // タイマー開始
+      startTimer();
+
+      // パズルシャッフル
+      shufflePuzzle();
+
+      // スコアボード更新
+      updateScoreboard();
+    }
+
+    // ------------------------------------
+    // パズルをシャッフル
+    // ------------------------------------
+    function shufflePuzzle() {
+      for (let i = tiles.length - 1; i > 0; i--) {
+        if (i === emptyIndex) continue;
+        const j = Math.floor(Math.random() * (i + 1));
+        if (j === emptyIndex) continue;
+
+        const temp = tiles[i];
+        tiles[i] = tiles[j];
+        tiles[j] = temp;
+      }
+      emptyIndex = tiles.findIndex((t) => t === null);
+      updatePuzzlePosition();
+    }
+
+    // ------------------------------------
+    // ドラッグ開始(pointerdown)
+    // ------------------------------------
+    function handlePointerDown(event) {
+      const tile = event.currentTarget;
+      const index = tiles.indexOf(tile);
+      if (index < 0) return;
+
+      if (!isAdjacent(index, emptyIndex)) {
+        return;
+      }
+      dragDirection = getDragDirection(index, emptyIndex);
+      if (!dragDirection) return;
+
+      draggingTile = tile;
+      draggingIndex = index;
+
+      startPointerX = event.clientX;
+      startPointerY = event.clientY;
+      startTileLeft = parseFloat(tile.style.left);
+      startTileTop  = parseFloat(tile.style.top);
+
+      tile.style.transition = "none";
+      tile.setPointerCapture(event.pointerId);
+
+      tile.addEventListener("pointermove", handlePointerMove);
+      tile.addEventListener("pointerup", handlePointerUp);
+      tile.addEventListener("pointercancel", handlePointerUp);
+    }
+
+    // ------------------------------------
+    // ドラッグ中(pointermove)
+    // ------------------------------------
+    function handlePointerMove(event) {
+      if (!draggingTile) return;
+
+      const dx = event.clientX - startPointerX;
+      const dy = event.clientY - startPointerY;
+
+      let moveX = 0;
+      let moveY = 0;
+
+      if (dragDirection === "left") {
+        moveX = Math.min(0, dx);
+        if (moveX < -tileSize) moveX = -tileSize;
+      } else if (dragDirection === "right") {
+        moveX = Math.max(0, dx);
+        if (moveX > tileSize) moveX = tileSize;
+      } else if (dragDirection === "up") {
+        moveY = Math.min(0, dy);
+        if (moveY < -tileSize) moveY = -tileSize;
+      } else if (dragDirection === "down") {
+        moveY = Math.max(0, dy);
+        if (moveY > tileSize) moveY = tileSize;
+      }
+
+      draggingTile.style.left = (startTileLeft + moveX) + "px";
+      draggingTile.style.top  = (startTileTop  + moveY) + "px";
+    }
+
+    // ------------------------------------
+    // ドラッグ終了(pointerup / pointercancel)
+    // ------------------------------------
+    function handlePointerUp(event) {
+      if (!draggingTile) return;
+
+      const endLeft = parseFloat(draggingTile.style.left);
+      const endTop  = parseFloat(draggingTile.style.top);
+
+      const distanceX = Math.abs(endLeft - startTileLeft);
+      const distanceY = Math.abs(endTop - startTileTop);
+
+      const movedEnough = (distanceX > tileSize / 2) || (distanceY > tileSize / 2);
+
+      draggingTile.removeEventListener("pointermove", handlePointerMove);
+      draggingTile.removeEventListener("pointerup", handlePointerUp);
+      draggingTile.removeEventListener("pointercancel", handlePointerUp);
+
+      if (movedEnough) {
+        swapTile(draggingIndex);
+      } else {
+        // 元の場所に戻す
+        draggingTile.style.left = startTileLeft + "px";
+        draggingTile.style.top  = startTileTop  + "px";
+      }
+
+      draggingTile.style.transition = "all 0.2s ease";
+      draggingTile = null;
+      dragDirection = null;
+      draggingIndex = null;
+    }
+
+    // ------------------------------------
+    // タイルを空タイルとスワップ (移動回数+1)
+    // ------------------------------------
+    function swapTile(tileIndex) {
+      const temp = tiles[tileIndex];
+      tiles[tileIndex] = tiles[emptyIndex];
+      tiles[emptyIndex] = temp;
+      emptyIndex = tileIndex;
+
+      // 移動回数 +1
+      moveCount++;
+      updateScoreboard();
+
+      updatePuzzlePosition();
+    }
+
+    // ------------------------------------
+    // タイル配置を画面に反映
+    // ------------------------------------
+    function updatePuzzlePosition() {
+      for (let i = 0; i < tiles.length; i++) {
+        const tile = tiles[i];
+        if (!tile) continue;
+
+        tile.classList.remove("empty");
+        const row = Math.floor(i / COLS);
+        const col = i % COLS;
+        tile.style.left = (col * tileSize) + "px";
+        tile.style.top  = (row * tileSize) + "px";
+      }
+      if (tiles[emptyIndex]) {
+        tiles[emptyIndex].classList.add("empty");
+      }
+    }
+
+    // ------------------------------------
+    // 正解チェック
+    // ------------------------------------
+    function checkSolution() {
+      let isComplete = true;
+      for (let i = 0; i < tiles.length; i++) {
+        if (i === tiles.length - 1) continue; // 最後は空タイルOK
+
+        const tile = tiles[i];
+        if (!tile) {
+          isComplete = false;
+          break;
+        }
+
+        const correctRow = parseInt(tile.dataset.correctRow, 10);
+        const correctCol = parseInt(tile.dataset.correctCol, 10);
+        const row = Math.floor(i / COLS);
+        const col = i % COLS;
+
+        if (row !== correctRow || col !== correctCol) {
+          isComplete = false;
+          break;
+        }
+      }
+
+      if (isComplete) {
+        // タイマー停止 → 結果表示
+        stopTimer();
+        alert(
+          "パズル完成です！\n" +
+          `経過時間: ${getElapsedTime().toFixed(1)}秒\n` +
+          `移動回数: ${moveCount}`
+        );
+      } else {
+        alert("まだ完成していません。");
+      }
+    }
+
+    // ------------------------------------
+    // タイマー開始
+    // ------------------------------------
+    function startTimer() {
+      startTime = Date.now();
+      if (timerInterval) clearInterval(timerInterval);
+      timerInterval = setInterval(() => {
+        updateScoreboard();
+      }, 100);
+    }
+
+    // ------------------------------------
+    // タイマー停止
+    // ------------------------------------
+    function stopTimer() {
+      if (timerInterval) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+      }
+    }
+
+    // ------------------------------------
+    // 経過秒を返す
+    // ------------------------------------
+    function getElapsedTime() {
+      if (!startTime) return 0;
+      return (Date.now() - startTime) / 1000;
+    }
+
+    // ------------------------------------
+    // スコアボードを更新（日本語表記）
+    // ------------------------------------
+    function updateScoreboard() {
+      const scoreboard = document.getElementById("scoreboard");
+      const time = getElapsedTime().toFixed(1);
+      scoreboard.textContent = `経過時間: ${time}秒 | 移動回数: ${moveCount}`;
+    }
+
+    // ------------------------------------
+    // 空タイルと隣接しているかどうか
+    // ------------------------------------
+    function isAdjacent(index1, index2) {
+      const r1 = Math.floor(index1 / COLS);
+      const c1 = index1 % COLS;
+      const r2 = Math.floor(index2 / COLS);
+      const c2 = index2 % COLS;
+      return (r1 === r2 && Math.abs(c1 - c2) === 1) ||
+             (c1 === c2 && Math.abs(r1 - r2) === 1);
+    }
+
+    // ------------------------------------
+    // ドラッグする方向を判定
+    // ------------------------------------
+    function getDragDirection(index1, index2) {
+      const r1 = Math.floor(index1 / COLS);
+      const c1 = index1 % COLS;
+      const r2 = Math.floor(index2 / COLS);
+      const c2 = index2 % COLS;
+
+      if (r1 === r2 && c1 === c2 + 1) return "left";
+      if (r1 === r2 && c1 === c2 - 1) return "right";
+      if (c1 === c2 && r1 === r2 + 1) return "up";
+      if (c1 === c2 && r1 === r2 - 1) return "down";
+      return null;
+    }
+  </script>
+</body>
+</html>
